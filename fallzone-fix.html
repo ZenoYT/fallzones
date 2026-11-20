@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <base href="https://cdn.jsdelivr.net/gh/ZenoYT/fallzones@main/">
+</head>
+<body style="margin:0;padding:0">
+  <div id="loading-text" style="color:#fff;font:48px cursive;text-align:center;margin-top:20px">LOADING...</div>
+  <canvas id="unity-canvas" style="position:fixed;top:0;left:0;width:100%;height:100%;outline:none"></canvas>
+
+  <script>
+    const SPLIT_MAP = {
+      "b0d8401e13ec7bae29e4044e1a9b3fc5.wasm.br": null,
+      "f2922761fd2fc4437369dc8dd2a9274d.data.br": null
+    };
+    const WS_REWRITE = {};   // e.g. { "fallzone.io": "your-relay.example" }
+
+    async function mergeParts(baseUrl) {
+      const parts = [];
+      for (let i = 1; i <= 99; i++) {
+        const u = baseUrl + ".part" + i;
+        try { const h = await fetch(u, { method: "HEAD" }); if (!h.ok) break; parts.push(u); }
+        catch { break; }
+      }
+      if (!parts.length) return baseUrl;
+      const bufs = await Promise.all(parts.map(async u => {
+        const r = await fetch(u);
+        if (!r.ok) throw new Error("Failed part " + u);
+        return new Uint8Array(await r.arrayBuffer());
+      }));
+      const merged = new Uint8Array(bufs.reduce((a, b) => a + b.length, 0));
+      let o = 0;
+      for (const b of bufs) { merged.set(b, o); o += b.length; }
+      return URL.createObjectURL(new Blob([merged]));
+    }
+
+    async function preMergeAll() {
+      const map = {}, txt = document.getElementById("loading-text");
+      const files = Object.keys(SPLIT_MAP);
+      let done = 0;
+      for (const f of files) {
+        map[f] = await mergeParts("Build/" + f);
+        done++;
+        txt.innerText = "LOADING... " + Math.floor(done / files.length * 100) + "%";
+      }
+      txt.style.display = "none";
+      return map;
+    }
+
+    (async () => {
+      const merged = await preMergeAll();
+      const base = document.querySelector("base").href;
+      const of = window.fetch;
+      window.fetch = function (res, opt) {
+        if (typeof res === "string") {
+          const key = res.split("/").pop();
+          if (merged[key]) return of(merged[key], opt);
+          if (res.includes("StreamingAssets")) {
+            return of(base + "StreamingAssets/" + res.split("/StreamingAssets/")[1], opt);
+          }
+        }
+        return of(res, opt);
+      };
+
+      const OX = window.XMLHttpRequest;
+      window.XMLHttpRequest = function () {
+        const x = new OX(), oo = x.open;
+        x.open = function (m, u, ...r) {
+          const key = u.split("/").pop();
+          oo.call(x, m, merged[key] || u, ...r);
+        };
+        return x;
+      };
+
+      // only rewrites hosts you list; leaves everything else alone
+      const OW = window.WebSocket;
+      window.WebSocket = function (url, p) {
+        try {
+          const u = new URL(url, location.href);
+          if (WS_REWRITE[u.host]) { u.host = WS_REWRITE[u.host]; url = u.toString(); }
+        } catch {}
+        return p === undefined ? new OW(url) : new OW(url, p);
+      };
+      Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+
+      const canvas = document.querySelector("#unity-canvas");
+      const config = {
+        dataUrl: "Build/f2922761fd2fc4437369dc8dd2a9274d.data.br",
+        frameworkUrl: "Build/7b342f6ca512dd39aacd92ce9bf9507a.framework.js.br",
+        codeUrl: "Build/b0d8401e13ec7bae29e4044e1a9b3fc5.wasm.br",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "LEGiON Platforms",
+        productName: "FallZone.io",
+        productVersion: "15z86190496"
+      };
+      const s = document.createElement("script");
+      s.src = "Build/bca790120e83811a2377d59719115759.loader.js";
+      s.onload = () => createUnityInstance(canvas, config, () => {})
+        .then(i => window.unityInstance = i)
+        .catch(m => alert(m));
+      document.body.appendChild(s);
+
+      const fit = () => {
+        canvas.width = innerWidth; canvas.height = innerHeight;
+        canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px";
+      };
+      addEventListener("load", fit); addEventListener("resize", fit);
+    })();
+  </script>
+</body>
+</html>
